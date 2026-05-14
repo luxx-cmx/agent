@@ -5,6 +5,8 @@ node_modules/
 .next/
 dist/
 .env
+*.egg-info/
+*.log
 apps/api/.venv/
 apps/web/.next/
 data/audio/*.wav
