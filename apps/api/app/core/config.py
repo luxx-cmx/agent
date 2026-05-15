@@ -20,6 +20,7 @@ class Settings(BaseSettings):
             "http://127.0.0.1:3000",
             "http://localhost:3001",
             "http://127.0.0.1:3001",
+            "http://8.133.162.213:8080",
         ]
     )
     dev_jwt_token: str = "agent-core-dev-token"

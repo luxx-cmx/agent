@@ -56,3 +56,50 @@ npm run dev
 - Redis 为可选增强层，仅用于缓存 Agent 配置；不可用时自动回落到数据库读取
 - TTS 在未配置真实 MiMo 服务时生成本地 wav 占位音频，接口形状保持一致
 - 搜索、数据库、代码解释器工具使用本地演示适配器，便于联调前后端界面
+
+## 阿里云部署
+
+当前仓库自带的 `docker-compose.yml` 是开发部署方案，适合在阿里云 ECS 上先拉起联调环境。前端仍是开发模式，API 已改为构建镜像启动，避免容器启动时长时间安装依赖。
+
+### 1. 准备服务器
+
+- 建议系统：Ubuntu 22.04 / 24.04
+- 安装 Docker 和 Docker Compose 插件
+- 放行安全组端口：`22`、`3000`、`8000`
+
+### 2. 拉取代码
+
+```bash
+git clone https://github.com/luxx-cmx/agent.git
+cd agent
+```
+
+如果你打算用 SSH 拉取，先把本机公钥加到 GitHub 的 SSH Keys，再把远端改成 `git@github.com:luxx-cmx/agent.git`。
+
+### 3. 配置环境变量
+
+在服务器上编辑 [apps/api/.env](apps/api/.env) 或按 [apps/api/.env.example](apps/api/.env.example) 复制一份，至少确认这些值是你自己的真实配置：
+
+- `DATABASE_URL`
+- `REDIS_HOST`
+- `REDIS_PASSWORD`
+- `AGENT_CORE_MIMO_BASE_URL`
+- `AGENT_CORE_MIMO_API_KEY`
+
+### 4. 启动服务
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+启动后访问：
+
+- 前端：`http://服务器公网IP:3000`
+- 后端：`http://服务器公网IP:8000/api/v1`
+
+### 5. 常见注意点
+
+- 这个 `docker-compose.yml` 仍然是开发向部署方案，不适合直接作为高并发生产方案。
+- 如果你要正式对外服务，建议后续把后端和前端改成构建镜像 + Nginx 反向代理的生产部署方式。
+- 如果服务器上已经存在 `.env` 或其他敏感配置，不要把它提交到 GitHub。

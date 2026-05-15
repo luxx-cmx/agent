@@ -2,13 +2,11 @@ version: "3.9"
 
 services:
   api:
-    image: python:3.11-slim
-    working_dir: /workspace/apps/api
-    command: sh -c "pip install -e .[dev] && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    build:
+      context: ./apps/api
+    image: agent-api
     environment:
       AGENT_CORE_DEV_JWT_TOKEN: agent-core-dev-token
-    volumes:
-      - .:/workspace
     ports:
       - "8000:8000"
 
