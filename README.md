@@ -2,7 +2,7 @@
 
 基于需求文档实现的单仓 MVP，包含：
 
-- FastAPI 后端：会话管理、消息处理、SSE 流式输出、工具注册表、Agent 配置、TTS 生成
+- FastAPI 后端：会话管理、消息处理、SSE 流式输出、工具注册表、Agent 配置、TTS 生成、图片生成
 - Next.js 前端：聊天界面、工具调用卡片、会话侧栏、配置面板、TTS 播放
 - MiMo 模型适配层：默认使用本地 Stub，配置 OpenAI 兼容端点后可切换真实 MiMo 调用
 
@@ -41,12 +41,17 @@ npm run dev
 - AGENT_CORE_MIMO_BASE_URL，配置后端 MiMo OpenAI 兼容接口地址
 - AGENT_CORE_MIMO_API_KEY，配置后端 MiMo API Key
 
+- AGENT_CORE_IMAGE_BASE_URL，配置后端图片生成 OpenAI 兼容接口地址
+- AGENT_CORE_IMAGE_API_KEY，配置后端图片生成 API Key
+- AGENT_CORE_IMAGE_MODEL，远端图片模型名，默认 flux-schnell
+
 ## 已实现能力
 
 - 会话创建、分页、重命名、删除、导出 Markdown/JSON
 - 最近消息滑动窗口与摘要压缩
 - ReAct 风格工具选择与 Observation 汇总
 - Web Search、Code Interpreter、Database Query、API Caller、File Manager、MiMo TTS Tool
+- 图片生成工具，支持远端图像模型与本地 SVG 兜底
 - SSE 事件：agent/thought、tool_call、tts_progress、final_answer
 - MiMo 模型配置与降级链路参数
 
@@ -55,17 +60,8 @@ npm run dev
 - 未配置 DATABASE_URL 时，后端回退到内存存储；配置后自动使用 PostgreSQL 持久化 conversations、messages、agent_configs 三张表
 - Redis 为可选增强层，仅用于缓存 Agent 配置；不可用时自动回落到数据库读取
 - TTS 在未配置真实 MiMo 服务时生成本地 wav 占位音频，接口形状保持一致
+- 图片生成在未配置真实图像服务时生成本地 SVG 占位图，接口形状保持一致
 - 搜索、数据库、代码解释器工具使用本地演示适配器，便于联调前后端界面
-
-## 阿里云部署
-
-当前仓库自带的 `docker-compose.yml` 是开发部署方案，适合在阿里云 ECS 上先拉起联调环境。前端仍是开发模式，API 已改为构建镜像启动，避免容器启动时长时间安装依赖。
-
-### 1. 准备服务器
-
-- 建议系统：Ubuntu 22.04 / 24.04
-- 安装 Docker 和 Docker Compose 插件
-- 放行安全组端口：`22`、`3000`、`8000`
 
 ### 2. 拉取代码
 
@@ -85,6 +81,9 @@ cd agent
 - `REDIS_PASSWORD`
 - `AGENT_CORE_MIMO_BASE_URL`
 - `AGENT_CORE_MIMO_API_KEY`
+- `AGENT_CORE_IMAGE_BASE_URL`
+- `AGENT_CORE_IMAGE_API_KEY`
+- `AGENT_CORE_IMAGE_MODEL`
 
 ### 4. 启动服务
 

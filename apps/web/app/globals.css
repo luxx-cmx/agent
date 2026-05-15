@@ -290,6 +290,7 @@ select {
   gap: 14px;
   padding: 20px 26px;
   overflow-y: auto;
+  overflow-anchor: none;
   align-content: start;
   scrollbar-width: thin;
   scrollbar-color: rgba(56, 50, 42, 0.08) transparent;

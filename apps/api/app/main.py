@@ -8,9 +8,10 @@ from app.api.routes_agent import router as agent_router
 from app.api.routes_conversations import router as conversations_router
 from app.api.routes_tools import router as tools_router
 from app.api.routes_tts import router as tts_router
-from app.core.config import AUDIO_DIR, settings
+from app.core.config import AUDIO_DIR, IMAGE_DIR, settings
 from app.services.model_provider import get_llm_runtime_source
 from app.services.store import store
+from app.services.tools import get_image_runtime_source
 from app.services.tts_service import get_tts_runtime_source
 
 
@@ -31,6 +32,7 @@ app.add_middleware(
 )
 
 app.mount("/static/audio", StaticFiles(directory=AUDIO_DIR), name="audio")
+app.mount("/static/images", StaticFiles(directory=IMAGE_DIR), name="images")
 
 
 @app.get("/health")
@@ -40,6 +42,7 @@ async def healthcheck():
         "store": store.backend_name,
         "llm_provider": get_llm_runtime_source(),
         "tts_provider": get_tts_runtime_source(),
+        "image_provider": get_image_runtime_source(),
     }
 
 

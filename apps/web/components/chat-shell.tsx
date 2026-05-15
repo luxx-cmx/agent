@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
 
 import {
   type AgentConfig,
@@ -35,7 +35,7 @@ function createLocalId() {
 const demoPrompt = "查询最近一周销售数据，分析环比趋势并输出报告，同时生成语音播报";
 const DEFAULT_CHAT_MODEL = "MiMo-V2.5-Pro";
 type StreamStatus = "idle" | "thinking" | "acting" | "done" | "failed";
- type GenerationTargetId = "auto" | "dialogue" | "analysis" | "search" | "code" | "multimodal" | "tts" | "voice_clone" | "voice_design";
+ type GenerationTargetId = "auto" | "dialogue" | "analysis" | "search" | "code" | "image" | "multimodal" | "tts" | "voice_clone" | "voice_design";
 type GenerationTarget = {
   id: GenerationTargetId;
   label: string;
@@ -159,6 +159,16 @@ const GENERATION_TARGETS: GenerationTarget[] = [
     examplePrompt: "生成一个 FastAPI 接口示例，返回订单统计结果，并附上调用说明。",
   },
   {
+    id: "image",
+    label: "图片生成",
+    description: "适合文生图、海报、插画和概念图输出。",
+    preferredModels: ["MiMo-V2.5-Pro", "MiMo-V2.5", "MiMo-V2-Omni"],
+    toolIds: ["image_generation"],
+    capabilities: ["文生图", "海报生成", "本地兜底"],
+    agentFunction: "把提示词转成图片资源，优先走远端图像模型，否则使用本地 SVG 兜底。",
+    examplePrompt: "生成一张霓虹赛博城市夜景海报，带电影感光影和高对比度。",
+  },
+  {
     id: "multimodal",
     label: "图文解析",
     description: "适合截图理解、图文解析和跨媒体任务。",
@@ -204,6 +214,31 @@ function getGenerationTarget(id: GenerationTargetId) {
   return GENERATION_TARGETS.find((target) => target.id === id) ?? GENERATION_TARGETS[0];
 }
 
+function scrollMessageListToBottom(messageList: HTMLDivElement | null) {
+  if (!messageList) {
+    return;
+  }
+
+  messageList.style.overflowAnchor = "none";
+  messageList.scrollTop = messageList.scrollHeight;
+
+  window.requestAnimationFrame(() => {
+    messageList.style.overflowAnchor = "none";
+    messageList.scrollTop = messageList.scrollHeight;
+  });
+}
+
+function resolveAssetUrl(assetUrl?: string | null) {
+  if (!assetUrl) {
+    return null;
+  }
+  if (/^https?:\/\//i.test(assetUrl)) {
+    return assetUrl;
+  }
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace("/api/v1", "") ?? "http://localhost:8000";
+  return `${baseUrl}${assetUrl}`;
+}
+
 function inferGenerationTarget(prompt: string): GenerationTargetId {
   const lowered = prompt.toLowerCase();
   if (["克隆", "复刻", "voice clone", "分身"].some((keyword) => lowered.includes(keyword))) {
@@ -215,7 +250,10 @@ function inferGenerationTarget(prompt: string): GenerationTargetId {
   if (["语音", "播报", "tts", "朗读", "配音"].some((keyword) => lowered.includes(keyword))) {
     return "tts";
   }
-  if (["截图", "图片", "图像", "视觉", "多模态"].some((keyword) => lowered.includes(keyword))) {
+  if (["生图", "生成图片", "图片生成", "画一张", "绘图", "插画", "海报", "生成一张"].some((keyword) => lowered.includes(keyword))) {
+    return "image";
+  }
+  if (["截图", "看图", "图像理解", "视觉", "多模态", "图片解析"].some((keyword) => lowered.includes(keyword))) {
     return "multimodal";
   }
   if (["代码", "接口", "api", "python", "脚本"].some((keyword) => lowered.includes(keyword))) {
@@ -274,6 +312,8 @@ export function ChatShell() {
   const [isQueryingDatabase, setIsQueryingDatabase] = useState(false);
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [isPending, startTransition] = useTransition();
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+  const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     startTransition(async () => {
@@ -312,6 +352,46 @@ export function ChatShell() {
     });
   }, [activeConversationId]);
 
+  useLayoutEffect(() => {
+    const messageList = messageListRef.current;
+    if (!messageList) {
+      return;
+    }
+
+    scrollMessageListToBottom(messageList);
+
+    const frame = window.requestAnimationFrame(() => {
+      scrollMessageListToBottom(messageList);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages, streamThought, streamTools, streamStatus]);
+
+  useEffect(() => {
+    const textarea = promptTextareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    const handleNativeKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
+        return;
+      }
+
+      window.setTimeout(() => {
+        const currentValue = textarea.value;
+        const normalizedValue = currentValue.endsWith("\n") ? currentValue.slice(0, -1) : currentValue;
+        if (normalizedValue !== prompt) {
+          setPrompt(normalizedValue);
+        }
+        void handleSend(normalizedValue);
+      }, 0);
+    };
+
+    textarea.addEventListener("keydown", handleNativeKeyDown);
+    return () => textarea.removeEventListener("keydown", handleNativeKeyDown);
+  }, [handleSend]);
+
   async function handleCreateConversation() {
     const conversation = await createConversation(config?.model);
     setConversations((current) => [conversation, ...current]);
@@ -319,15 +399,17 @@ export function ChatShell() {
     setMessages([]);
   }
 
-  async function handleSend() {
-    if (!activeConversationId || !prompt.trim() || isSending) {
+  async function handleSend(promptOverride?: string) {
+    const currentPrompt = (promptOverride ?? prompt).trim();
+
+    if (!activeConversationId || !currentPrompt || isSending) {
       return;
     }
     const effectiveModel = routedModel;
     const userMessage: Message = {
       id: createLocalId(),
       role: "user",
-      content: prompt,
+      content: currentPrompt,
       created_at: new Date().toISOString(),
       model: effectiveModel,
       tokens_used: 0,
@@ -337,14 +419,13 @@ export function ChatShell() {
       tts_audio_url: null,
     };
     setMessages((current) => [...current, userMessage]);
-    const currentPrompt = prompt;
+    scrollMessageListToBottom(messageListRef.current);
     setPrompt("");
     setStreamThought("");
     setStreamTools([]);
     setStreamStatus("thinking");
     setStreamStatusDetail("正在分析请求");
     setIsSending(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
 
     try {
       await sendMessageStream(activeConversationId, currentPrompt, effectiveModel, activeTarget.id, (event) => {
@@ -370,9 +451,9 @@ export function ChatShell() {
         if (event.event === "final_answer") {
           const payload = event.data as { message: Message };
           setMessages((current) => [...current, payload.message]);
+          scrollMessageListToBottom(messageListRef.current);
           setStreamStatus("done");
           setStreamStatusDetail("请求成功");
-          window.scrollTo({ top: 0, behavior: "smooth" });
         }
       });
       const refreshed = await fetchConversations();
@@ -382,7 +463,7 @@ export function ChatShell() {
     } catch (error) {
       setStreamStatus("failed");
       setStreamStatusDetail(error instanceof Error ? error.message : "请求失败");
-      throw error;
+      console.error("send message failed", error);
     } finally {
       setIsSending(false);
     }
@@ -447,7 +528,6 @@ export function ChatShell() {
             <button className="primary" onClick={handleCreateConversation}>新建</button>
           </div>
         </div>
-
         <div className="metric-grid" style={{ marginTop: 14 }}>
           <div className="metric-card">
             <div className="muted">模型链路</div>
@@ -464,6 +544,10 @@ export function ChatShell() {
           <div className="metric-card">
             <div className="muted">TTS 来源</div>
             <strong>{health?.tts_provider ?? "loading"}</strong>
+          </div>
+          <div className="metric-card">
+            <div className="muted">图片来源</div>
+            <strong>{health?.image_provider ?? "loading"}</strong>
           </div>
         </div>
 
@@ -487,11 +571,11 @@ export function ChatShell() {
           <div className="badge">ReAct + Tooling + MiMo</div>
           <h1 className="headline">智能体平台控制台</h1>
           <p className="subline">
-            覆盖会话管理、工具调用卡片、配置面板、TTS 播放与 MiMo 模型切换。当前运行态会直接展示真实 MiMo 或本地 Stub 的来源状态。
+            覆盖会话管理、工具调用卡片、配置面板、TTS 播放、图片生成与 MiMo 模型切换。当前运行态会直接展示真实 MiMo 或本地 Stub 的来源状态。
           </p>
         </header>
 
-        <div className="message-list">
+        <div className="message-list" ref={messageListRef}>
           {messages.length === 0 ? (
             <div className="message assistant">
               <div className="message-meta">
@@ -515,13 +599,22 @@ export function ChatShell() {
                     <div key={tool.id} className="tool-card">
                       <h4>{tool.display_name}</h4>
                       <p className="muted">{JSON.stringify(tool.arguments)}</p>
+                      {tool.tool_id === "image_generation" && typeof tool.result.image_url === "string" ? (
+                        <div style={{ margin: "10px 0" }}>
+                          <img
+                            alt="generated"
+                            src={resolveAssetUrl(tool.result.image_url) ?? undefined}
+                            style={{ width: "100%", maxWidth: 480, borderRadius: 16, border: "1px solid rgba(255,255,255,0.08)" }}
+                          />
+                        </div>
+                      ) : null}
                       <pre>{JSON.stringify(tool.result, null, 2)}</pre>
                     </div>
                   ))}
                 </div>
               ) : null}
               {message.tts_audio_url ? (
-                <audio className="audio" controls src={`${process.env.NEXT_PUBLIC_API_BASE_URL?.replace("/api/v1", "") ?? "http://localhost:8000"}${message.tts_audio_url}`} />
+                <audio className="audio" controls src={resolveAssetUrl(message.tts_audio_url) ?? undefined} />
               ) : null}
             </article>
           ))}
@@ -529,7 +622,13 @@ export function ChatShell() {
 
         <div className="composer">
           <div className="composer-card">
-            <textarea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="输入消息..." />
+            <textarea
+              ref={promptTextareaRef}
+              rows={4}
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="输入消息..."
+            />
             <div className="composer-footer">
               <label className="intent-switcher">
                 <span className="muted">生成内容</span>
@@ -562,7 +661,7 @@ export function ChatShell() {
             </div>
             <div className="actions">
               <button className="ghost" onClick={() => setPrompt(activeTarget.examplePrompt)}>填充示例</button>
-              <button className="primary" onClick={handleSend} disabled={isPending || isSending}>
+              <button className="primary" onClick={() => void handleSend()} disabled={isPending || isSending}>
                 {isSending ? "发送中..." : "发送消息"}
               </button>
             </div>

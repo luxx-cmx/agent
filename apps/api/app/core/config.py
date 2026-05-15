@@ -9,6 +9,7 @@ API_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT_DIR / "data"
 SANDBOX_DIR = DATA_DIR / "sandbox"
 AUDIO_DIR = DATA_DIR / "audio"
+IMAGE_DIR = DATA_DIR / "images"
 
 
 class Settings(BaseSettings):
@@ -30,6 +31,10 @@ class Settings(BaseSettings):
     mimo_base_url: str | None = None
     mimo_api_key: str | None = None
     mimo_timeout_seconds: float = 30.0
+    image_base_url: str | None = None
+    image_api_key: str | None = None
+    image_model: str = "flux-schnell"
+    image_timeout_seconds: float = 60.0
     database_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices("DATABASE_URL", "AGENT_CORE_DATABASE_URL"),
@@ -64,5 +69,5 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-for directory in (DATA_DIR, SANDBOX_DIR, AUDIO_DIR):
+for directory in (DATA_DIR, SANDBOX_DIR, AUDIO_DIR, IMAGE_DIR):
     directory.mkdir(parents=True, exist_ok=True)

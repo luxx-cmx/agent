@@ -153,3 +153,20 @@ class TTSResponse(BaseModel):
     duration: float
     source: str = "stub"
     status: Literal["success", "failed"] = "success"
+
+
+class ImageGenerationRequest(BaseModel):
+    prompt: str
+    style: str | None = None
+    size: str = "1024x1024"
+
+
+class ImageGenerationResponse(BaseModel):
+    status: Literal["success", "failed"]
+    prompt: str
+    image_url: str | None = None
+    source: str = "stub"
+    format: str | None = None
+    model: str | None = None
+    error: str | None = None
+    detail: str | None = None

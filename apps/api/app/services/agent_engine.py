@@ -14,6 +14,7 @@ from app.services.tools import (
     code_interpreter_tool,
     database_query_tool,
     file_manager_tool,
+    image_generation_tool,
     run_tools_in_parallel,
     web_search_tool,
 )
@@ -29,11 +30,13 @@ class AgentEngine:
         "search": "MiMo-V2-Omni",
         "code": "MiMo-V2.5-Pro",
         "multimodal": "MiMo-V2-Omni",
+        "image": "MiMo-V2.5-Pro",
         "tts": "MiMo-V2.5-TTS",
         "voice_clone": "MiMo-V2.5-TTS-VoiceClone",
         "voice_design": "MiMo-V2.5-TTS-VoiceDesign",
     }
 
+    IMAGE_TARGETS = {"image"}
     TTS_TARGETS = {"tts", "voice_clone", "voice_design"}
 
     TARGET_TITLES: dict[str, str] = {
@@ -43,6 +46,7 @@ class AgentEngine:
         "search": "联网搜索",
         "code": "接口 / 代码",
         "multimodal": "图文解析",
+        "image": "图片生成",
         "tts": "语音播报",
         "voice_clone": "声音克隆",
         "voice_design": "音色设计",
@@ -55,6 +59,7 @@ class AgentEngine:
         "search": ["web_search", "api_caller"],
         "code": ["code_interpreter", "api_caller", "file_manager"],
         "multimodal": ["web_search", "api_caller"],
+        "image": ["image_generation"],
         "tts": ["mimo_tts"],
         "voice_clone": ["mimo_tts"],
         "voice_design": ["mimo_tts"],
@@ -70,7 +75,9 @@ class AgentEngine:
             return "voice_design"
         if any(keyword in lowered for keyword in ["语音", "播报", "tts", "朗读", "配音"]):
             return "tts"
-        if any(keyword in lowered for keyword in ["截图", "图片", "图像", "视觉", "多模态"]):
+        if any(keyword in lowered for keyword in ["生图", "生成图片", "图片生成", "画一张", "绘图", "插画", "海报", "生成一张"]):
+            return "image"
+        if any(keyword in lowered for keyword in ["截图", "看图", "图像理解", "视觉", "多模态", "图片解析"]):
             return "multimodal"
         if any(keyword in lowered for keyword in ["代码", "接口", "api", "python", "脚本"]):
             return "code"
@@ -88,6 +95,9 @@ class AgentEngine:
 
     def _is_tts_target(self, generation_target: str) -> bool:
         return generation_target in self.TTS_TARGETS
+
+    def _is_image_target(self, generation_target: str) -> bool:
+        return generation_target in self.IMAGE_TARGETS
 
     def _extract_tts_text(self, prompt: str) -> str:
         patterns = [r"说的是[:：]?\s*(.+)$", r"内容[:：]?\s*(.+)$", r"播报[:：]?\s*(.+)$", r"读出[:：]?\s*(.+)$"]
@@ -131,6 +141,32 @@ class AgentEngine:
             f"- 音频地址：{audio_url}\n"
             f"- 预计时长：{duration:.1f} 秒\n"
             f"- 当前模型：{tts_model}\n"
+        )
+
+    def _render_image_result(self, *, requested_model: str, image_model: str, prompt: str, style: str, size: str, source: str, image_url: str, format_name: str) -> str:
+        return (
+            f"已使用图片生成工具处理请求。\n\n"
+            "---\n\n"
+            "## 图片生成请求\n\n"
+            "### ReAct 执行流程\n\n"
+            "| 步骤 | 动作 | 参数 |\n"
+            "|------|------|------|\n"
+            f"| 1 | `image_config` | 选择模型 `{requested_model}` |\n"
+            f"| 2 | `image_generate` | 提示词=`{prompt}` |\n"
+            f"| 3 | `asset_persist` | 输出=`{image_url}` |\n\n"
+            "---\n\n"
+            "### 生成参数\n\n"
+            "| 参数 | 值 |\n"
+            "|------|------|\n"
+            f"| 提示词 | {prompt} |\n"
+            f"| 风格 | {style} |\n"
+            f"| 尺寸 | {size} |\n"
+            f"| 输出来源 | {source} |\n"
+            f"| 格式 | {format_name} |\n\n"
+            "---\n\n"
+            "### 生成结果\n\n"
+            f"- 图片地址：{image_url}\n"
+            f"- 当前模型：{image_model}\n"
         )
 
     def _select_tools(self, prompt: str, generation_target: str) -> list[tuple[str, dict, callable]]:
@@ -193,6 +229,42 @@ class AgentEngine:
                     )
                 ],
                 tts_audio_url=tts_result.audio_url,
+            )
+
+        if self._is_image_target(generation_target):
+            image_model = self.resolve_model_for_target(generation_target)
+            image_result = await image_generation_tool(prompt=prompt, style=None, size="1024x1024")
+            latency = int((time.perf_counter() - started) * 1000)
+            image_url = image_result.get("image_url", "")
+            format_name = image_result.get("format", "png")
+            source = image_result.get("source", "stub")
+            return Message(
+                role="assistant",
+                content=self._render_image_result(
+                    requested_model=model,
+                    image_model=image_model,
+                    prompt=prompt,
+                    style=image_result.get("style", "default"),
+                    size=image_result.get("size", "1024x1024"),
+                    source=source,
+                    image_url=image_url,
+                    format_name=format_name,
+                ),
+                model=image_model,
+                tokens_used=max(100, len(prompt) * 2),
+                latency_ms=latency,
+                thought=f"动作：识别 {self.describe_target(generation_target)} -> 调用图片生成工具 -> 返回可访问的图片资源。",
+                tool_calls=[
+                    ToolCall(
+                        tool_id="image_generation",
+                        display_name="Image Generation",
+                        arguments={"prompt": prompt, "style": None, "size": "1024x1024"},
+                        result=image_result,
+                        duration_ms=latency,
+                        status="failed" if image_result.get("status") == "failed" else "success",
+                    )
+                ],
+                tts_audio_url=None,
             )
 
         model = self.resolve_model_for_target(generation_target)

@@ -27,6 +27,7 @@ DEFAULT_ENABLED_TOOLS = [
     "api_caller",
     "file_manager",
     "mimo_tts",
+    "image_generation",
 ]
 
 

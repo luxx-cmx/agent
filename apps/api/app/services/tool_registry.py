@@ -63,4 +63,18 @@ TOOLS: list[ToolDefinition] = [
             "MiMo-V2-TTS",
         ],
     ),
+    ToolDefinition(
+        id="image_generation",
+        name="Image Generation Tool",
+        description="根据提示词生成图片，支持本地 SVG 兜底与可配置远端图像模型。",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string"},
+                "style": {"type": "string"},
+                "size": {"type": "string"},
+            },
+        },
+        support_models=["MiMo-V2.5-Pro", "MiMo-V2.5", "MiMo-V2-Omni"],
+    ),
 ]

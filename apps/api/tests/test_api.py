@@ -46,6 +46,28 @@ def test_conversation_lifecycle_and_message_flow() -> None:
     assert len(detail.json()["messages"]) == 2
 
 
+def test_image_generation_message_flow() -> None:
+    created = client.post(
+        "/api/v1/conversations",
+        headers=headers,
+        json={"title": "图片生成会话", "system_prompt": "你是测试助手", "default_model": "MiMo-V2.5-Pro"},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["id"]
+
+    replied = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={"content": "生成一张赛博城市夜景海报", "stream": False},
+    )
+    assert replied.status_code == 200
+    payload = replied.json()
+    assert payload["message"]["tool_calls"]
+    assert payload["message"]["tool_calls"][0]["tool_id"] == "image_generation"
+    assert payload["message"]["tool_calls"][0]["result"]["image_url"]
+    assert "图片生成" in payload["message"]["content"] or "image_generation" in payload["message"]["content"]
+
+
 def test_tool_registry_and_agent_config() -> None:
     tools = client.get("/api/v1/tools", headers=headers)
     assert tools.status_code == 200

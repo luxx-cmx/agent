@@ -47,6 +47,7 @@ export type HealthStatus = {
   store: string;
   llm_provider: string;
   tts_provider: string;
+  image_provider?: string;
 };
 
 export type DatabaseSchemaTable = {

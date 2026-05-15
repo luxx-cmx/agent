@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import html
 import ipaddress
 import re
+import textwrap
 from pathlib import Path
+from uuid import uuid4
 from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.config import SANDBOX_DIR, settings
+from app.core.config import IMAGE_DIR, SANDBOX_DIR, settings
 
 
 QUERY_ROW_LIMIT = 50
@@ -24,6 +28,8 @@ TABLE_KEYWORD_MAP = {
     "messages": ["消息", "message", "对话", "assistant", "user", "role", "内容"],
     "agent_configs": ["配置", "config", "模型", "temperature", "memory", "迭代"],
 }
+
+IMAGE_SIZE_PATTERN = re.compile(r"^(\d{3,4})x(\d{3,4})$")
 
 
 def _normalize_database_url(url: str | None) -> str | None:
@@ -241,6 +247,168 @@ async def api_caller_tool(url: str, method: str = "GET") -> dict:
         "status_code": response.status_code,
         "body_preview": response.text[:400],
     }
+
+
+def get_image_runtime_source() -> str:
+    return "remote" if settings.image_base_url and settings.image_api_key else "stub"
+
+
+def _parse_image_size(size: str) -> tuple[int, int]:
+    match = IMAGE_SIZE_PATTERN.match(size.strip().lower())
+    if not match:
+        return 1024, 1024
+    return int(match.group(1)), int(match.group(2))
+
+
+def _wrap_prompt_lines(prompt: str) -> list[str]:
+    normalized = re.sub(r"\s+", " ", prompt.strip()) or "未提供提示词"
+    lines = textwrap.wrap(normalized, width=26)
+    return lines[:8] if lines else [normalized]
+
+
+def _build_local_image(prompt: str, style: str | None, size: str) -> dict:
+    width, height = _parse_image_size(size)
+    filename = f"image_{uuid4().hex}.svg"
+    target = IMAGE_DIR / filename
+    title = html.escape("Agent Core Image")
+    style_text = html.escape(style or "default")
+    prompt_lines = [html.escape(line) for line in _wrap_prompt_lines(prompt)]
+    line_elements = []
+    y = 246
+    for line in prompt_lines:
+        line_elements.append(f'<text x="72" y="{y}" class="prompt-line">{line}</text>')
+        y += 38
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#121826"/>
+      <stop offset="55%" stop-color="#20344f"/>
+      <stop offset="100%" stop-color="#3a5a80"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#f9c74f"/>
+      <stop offset="100%" stop-color="#f9844a"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000000" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#bg)"/>
+  <circle cx="{int(width * 0.79)}" cy="{int(height * 0.22)}" r="{int(min(width, height) * 0.16)}" fill="#f9c74f" opacity="0.14"/>
+  <circle cx="{int(width * 0.18)}" cy="{int(height * 0.78)}" r="{int(min(width, height) * 0.22)}" fill="#90be6d" opacity="0.10"/>
+  <rect x="48" y="48" width="{width - 96}" height="{height - 96}" rx="34" fill="#0f1724" fill-opacity="0.72" stroke="rgba(255,255,255,0.14)" filter="url(#shadow)"/>
+  <rect x="72" y="78" width="240" height="10" rx="5" fill="url(#accent)"/>
+  <text x="72" y="148" class="title">{title}</text>
+  <text x="72" y="188" class="meta">style: {style_text}</text>
+  <text x="72" y="224" class="meta">prompt</text>
+  {''.join(line_elements)}
+  <text x="72" y="{height - 78}" class="footer">local fallback render · {width}x{height}</text>
+  <style>
+    .title {{ fill: #ffffff; font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 34px; font-weight: 700; letter-spacing: 0.02em; }}
+    .meta {{ fill: #d8e4f0; font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 18px; opacity: 0.88; }}
+    .prompt-line {{ fill: #f8fafc; font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 26px; font-weight: 600; }}
+    .footer {{ fill: #cbd5e1; font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 15px; opacity: 0.75; }}
+  </style>
+</svg>"""
+    target.write_text(svg, encoding="utf-8")
+    return {
+        "status": "success",
+        "prompt": prompt,
+        "style": style or "default",
+        "size": f"{width}x{height}",
+        "source": "stub",
+        "format": "svg",
+        "image_url": f"/static/images/{filename}",
+    }
+
+
+async def _build_remote_image(prompt: str, style: str | None, size: str) -> dict:
+    payload = {
+        "model": settings.image_model,
+        "prompt": prompt,
+        "size": size,
+        "n": 1,
+    }
+    if style:
+        payload["style"] = style
+    headers = {
+        "Authorization": f"Bearer {settings.image_api_key}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=settings.image_timeout_seconds) as client:
+        response = await client.post(
+            f"{settings.image_base_url.rstrip('/')}/images/generations",
+            headers=headers,
+            json=payload,
+        )
+        response.raise_for_status()
+
+    data = response.json()
+    image_data = (data.get("data") or [{}])[0]
+    image_url = image_data.get("url")
+    image_b64 = image_data.get("b64_json")
+
+    if image_b64:
+        filename = f"image_{uuid4().hex}.png"
+        target = IMAGE_DIR / filename
+        target.write_bytes(base64.b64decode(image_b64))
+        return {
+            "status": "success",
+            "prompt": prompt,
+            "style": style or "default",
+            "size": size,
+            "source": "remote",
+            "format": "png",
+            "image_url": f"/static/images/{filename}",
+            "model": settings.image_model,
+        }
+
+    if image_url:
+        parsed = urlparse(image_url)
+        extension = Path(parsed.path).suffix or ".png"
+        filename = f"image_{uuid4().hex}{extension}"
+        target = IMAGE_DIR / filename
+        try:
+            async with httpx.AsyncClient(timeout=settings.image_timeout_seconds) as client:
+                image_response = await client.get(image_url)
+                image_response.raise_for_status()
+            target.write_bytes(image_response.content)
+            return {
+                "status": "success",
+                "prompt": prompt,
+                "style": style or "default",
+                "size": size,
+                "source": "remote",
+                "format": extension.lstrip(".") or "png",
+                "image_url": f"/static/images/{filename}",
+                "model": settings.image_model,
+            }
+        except Exception:
+            return {
+                "status": "success",
+                "prompt": prompt,
+                "style": style or "default",
+                "size": size,
+                "source": "remote",
+                "format": "url",
+                "image_url": image_url,
+                "model": settings.image_model,
+            }
+
+    raise ValueError("Image generation response does not contain image data")
+
+
+async def image_generation_tool(prompt: str, style: str | None = None, size: str = "1024x1024") -> dict:
+    if settings.image_base_url and settings.image_api_key:
+        try:
+            return await _build_remote_image(prompt, style, size)
+        except Exception:
+            pass
+    return _build_local_image(prompt, style, size)
+
+
+async def generate_image(prompt: str, style: str | None = None, size: str = "1024x1024") -> dict:
+    return await image_generation_tool(prompt=prompt, style=style, size=size)
 
 
 def _safe_path(path: str) -> Path:
