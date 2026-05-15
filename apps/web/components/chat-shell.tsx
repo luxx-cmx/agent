@@ -24,6 +24,14 @@ import {
 } from "../lib/api";
 
 
+function createLocalId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 const demoPrompt = "查询最近一周销售数据，分析环比趋势并输出报告，同时生成语音播报";
 const DEFAULT_CHAT_MODEL = "MiMo-V2.5-Pro";
 type StreamStatus = "idle" | "thinking" | "acting" | "done" | "failed";
@@ -317,7 +325,7 @@ export function ChatShell() {
     }
     const effectiveModel = routedModel;
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: createLocalId(),
       role: "user",
       content: prompt,
       created_at: new Date().toISOString(),
@@ -353,7 +361,7 @@ export function ChatShell() {
           setStreamTools((current) => [
             ...current,
             {
-              id: crypto.randomUUID(),
+              id: createLocalId(),
               payload: JSON.stringify(event.data, null, 2),
             },
           ]);
